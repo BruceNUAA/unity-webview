@@ -44,6 +44,12 @@ import android.webkit.CookieManager;
 import android.webkit.CookieSyncManager;
 import android.widget.FrameLayout;
 
+import android.app.AlertDialog;
+import android.content.DialogInterface;
+import android.os.Message;
+import android.view.WindowManager;
+import android.util.Log;
+
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.net.URLEncoder;
@@ -80,6 +86,8 @@ class CWebViewPluginInterface {
 public class CWebViewPlugin {
     private static FrameLayout layout = null;
     private WebView mWebView;
+    private WebView mPopWebView;
+    private View mVideoView;
     private CWebViewPluginInterface mWebViewPlugin;
     private int progress;
     private boolean canGoBack;
@@ -92,6 +100,102 @@ public class CWebViewPlugin {
 
     public boolean IsInitialized() {
         return mWebView != null;
+    }
+
+    class UriChromeClient extends WebChromeClient {
+        // cf. https://github.com/hwasiti/Android_Popup_Webview_handler_example
+        @Override
+        public boolean onCreateWindow(WebView view, boolean isDialog, boolean isUserGesture, Message resultMsg) {
+            if (mPopWebView != null) {
+                return false;
+            }
+            Activity a = UnityPlayer.currentActivity;
+            mPopWebView = new WebView(a);
+            // mPopWebView.setVerticalScrollBarEnabled(false);
+            // mPopWebView.setHorizontalScrollBarEnabled(false);
+            mPopWebView.setWebViewClient(new WebViewClient());
+            mPopWebView.setWebChromeClient(new UriChromeClient());
+            WebSettings webSettings = mPopWebView.getSettings();
+            webSettings.setSupportZoom(true);
+            webSettings.setBuiltInZoomControls(true);
+            webSettings.setDisplayZoomControls(false);
+            webSettings.setLoadWithOverviewMode(true);
+            webSettings.setUseWideViewPort(true);
+            webSettings.setJavaScriptEnabled(true);
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN) {
+                // Log.i("CWebViewPlugin", "Build.VERSION.SDK_INT = " + Build.VERSION.SDK_INT);
+                webSettings.setAllowUniversalAccessFromFileURLs(true);
+            }
+            webSettings.setMediaPlaybackRequiresUserGesture(false);
+            webSettings.setDatabaseEnabled(true);
+            webSettings.setDomStorageEnabled(true);
+            String databasePath = mPopWebView.getContext().getDir("databases", Context.MODE_PRIVATE).getPath();
+            webSettings.setDatabasePath(databasePath);
+            // webSettings.setAppCacheEnabled(true);
+            // webSettings.setSavePassword(true);
+            // webSettings.setSaveFormData(true);
+
+            layout.addView(
+                mPopWebView,
+                new FrameLayout.LayoutParams(
+                    LayoutParams.MATCH_PARENT,
+                    LayoutParams.MATCH_PARENT,
+                    Gravity.NO_GRAVITY));
+            mPopWebView.setLayoutParams(mWebView.getLayoutParams());
+            CookieManager cookieManager = CookieManager.getInstance();
+            cookieManager.setAcceptCookie(true);
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                cookieManager.setAcceptThirdPartyCookies(mPopWebView, true);
+            }
+            WebView.WebViewTransport transport = (WebView.WebViewTransport)resultMsg.obj;
+            transport.setWebView(mPopWebView);
+            resultMsg.sendToTarget();
+            return true;
+        }
+
+        @Override
+        public void onCloseWindow(WebView window) {
+            try {
+                layout.removeView(mPopWebView);
+            } catch (Exception e) {
+            }
+            try {
+                mPopWebView.destroy();
+            } catch (Exception e) {
+            }
+            mPopWebView = null;
+        }
+
+        @Override
+        public void onProgressChanged(WebView view, int newProgress) {
+            progress = newProgress;
+        }
+
+        @Override
+        public void onShowCustomView(View view, CustomViewCallback callback) {
+            super.onShowCustomView(view, callback);
+            if (layout != null) {
+                mVideoView = view;
+                layout.setBackgroundColor(0xff000000);
+                layout.addView(mVideoView);
+            }
+        }
+
+        @Override
+        public void onHideCustomView() {
+            super.onHideCustomView();
+            if (layout != null) {
+                layout.removeView(mVideoView);
+                layout.setBackgroundColor(0x00000000);
+                mVideoView = null;
+            }
+        }
+
+        // @Override
+        // public boolean onConsoleMessage(android.webkit.ConsoleMessage cm) {
+        //     Log.d("Webview", cm.message());
+        //     return true;
+        // }
     }
 
     public void Init(final String gameObject, final boolean transparent, final String ua) {
@@ -108,40 +212,7 @@ public class CWebViewPlugin {
             webView.setFocusable(true);
             webView.setFocusableInTouchMode(true);
 
-            // webView.setWebChromeClient(new WebChromeClient() {
-            //     public boolean onConsoleMessage(android.webkit.ConsoleMessage cm) {
-            //         Log.d("Webview", cm.message());
-            //         return true;
-            //     }
-            // });
-            webView.setWebChromeClient(new WebChromeClient() {
-                View videoView;
-
-                @Override
-                public void onProgressChanged(WebView view, int newProgress) {
-                    progress = newProgress;
-                }
-
-                @Override
-                public void onShowCustomView(View view, CustomViewCallback callback) {
-                    super.onShowCustomView(view, callback);
-                    if (layout != null) {
-                        videoView = view;
-                        layout.setBackgroundColor(0xff000000);
-                        layout.addView(videoView);
-                    }
-                }
-
-                @Override
-                public void onHideCustomView() {
-                    super.onHideCustomView();
-                    if (layout != null) {
-                        layout.removeView(videoView);
-                        layout.setBackgroundColor(0x00000000);
-                        videoView = null;
-                    }
-                }
-            });
+            webView.setWebChromeClient(new UriChromeClient());
 
             mWebViewPlugin = new CWebViewPluginInterface(self, gameObject);
             webView.setWebViewClient(new WebViewClient() {
@@ -155,7 +226,7 @@ public class CWebViewPlugin {
                 
                 @Override
                 public void onReceivedHttpError(WebView view, WebResourceRequest request, WebResourceResponse errorResponse) {
-                	canGoBack = webView.canGoBack();
+                    canGoBack = webView.canGoBack();
                     canGoForward = webView.canGoForward();
                     mWebViewPlugin.call("CallOnHttpError", Integer.toString(errorResponse.getStatusCode()));
                 }
@@ -253,6 +324,11 @@ public class CWebViewPlugin {
             webSettings.setDomStorageEnabled(true);
             String databasePath = webView.getContext().getDir("databases", Context.MODE_PRIVATE).getPath();
             webSettings.setDatabasePath(databasePath);
+            // webSettings.setAppCacheEnabled(true);
+            // webSettings.setSavePassword(true);
+            // webSettings.setSaveFormData(true);
+            webSettings.setJavaScriptCanOpenWindowsAutomatically(true);
+            webSettings.setSupportMultipleWindows(true);
 
             if (transparent) {
                 webView.setBackgroundColor(0x00000000);

@@ -120,6 +120,7 @@ extern "C" void UnitySendMessage(const char *, const char *, const char *);
 @interface CWebViewPlugin : NSObject<UIWebViewDelegate, WKUIDelegate, WKNavigationDelegate, WKScriptMessageHandler>
 {
     UIView <WebViewProtocol> *webView;
+    WKWebView *popWebView;
     NSString *gameObjectName;
     NSMutableDictionary *customRequestHeader;
 }
@@ -297,6 +298,33 @@ extern "C" void UnitySendMessage(const char *, const char *, const char *);
     }
 }
 
+- (WKWebView *)webView:(WKWebView *)wkWebView createWebViewWithConfiguration:(WKWebViewConfiguration *)configuration forNavigationAction:(WKNavigationAction *)navigationAction windowFeatures:(WKWindowFeatures *)windowFeatures {
+    if (popWebView) {
+        return nil;
+    }
+    popWebView = [[WKWebView alloc] initWithFrame:webView.frame configuration:configuration];
+    popWebView.frame
+        = CGRectMake(
+            webView.frame.origin.x,
+            webView.frame.origin.y,
+            webView.frame.size.width,
+            webView.frame.size.height);
+    popWebView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+    popWebView.UIDelegate = self;
+    popWebView.navigationDelegate = self;
+    // popWebView.load(navigationAction.request);
+    UIView *view = UnityGetGLViewController().view;
+    [view addSubview:popWebView];
+    return popWebView;
+}
+
+- (void)webViewDidClose:(WKWebView *)webView {
+    if (webView == popWebView) {
+        [popWebView removeFromSuperview];
+        popWebView = nil;
+    }
+}
+
 - (void)webView:(WKWebView *)wkWebView decidePolicyForNavigationAction:(WKNavigationAction *)navigationAction decisionHandler:(void (^)(WKNavigationActionPolicy))decisionHandler
 {
     if (webView == nil) {
@@ -329,8 +357,9 @@ extern "C" void UnitySendMessage(const char *, const char *, const char *);
     } else if (navigationAction.navigationType == WKNavigationTypeLinkActivated
                && (!navigationAction.targetFrame || !navigationAction.targetFrame.isMainFrame)) {
         // cf. for target="_blank", cf. http://qiita.com/ShingoFukuyama/items/b3a1441025a36ab7659c
-        [webView load:navigationAction.request];
-        decisionHandler(WKNavigationActionPolicyCancel);
+        // [webView load:navigationAction.request];
+        // decisionHandler(WKNavigationActionPolicyCancel);
+        decisionHandler(WKNavigationActionPolicyAllow);
         return;
     } else {
         if (navigationAction.targetFrame != nil && navigationAction.targetFrame.isMainFrame) {
